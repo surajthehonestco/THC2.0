@@ -1,0 +1,232 @@
+name: THC Admin Panel CI/CD Pipeline on Self-Hosted Runner
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-and-test:
+    runs-on: [self-hosted, Linux, X64, thcadmin3]
+    env:
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: ${{ secrets.DB_DATABASE }}
+      DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      VITE_APP_NAME: TheHonestCo
+      APP_KEY: ${{ secrets.APP_KEY }}
+      APP_URL: ${{ secrets.APP_URL }}
+
+    steps:
+      # Clean working directory before starting
+      - name: Clean working directory
+        run: |
+          rm -rf $GITHUB_WORKSPACE/*
+          echo "Working directory cleaned: $GITHUB_WORKSPACE"
+
+      # Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up PHP
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, xml, ctype, iconv, mysql, pdo, pdo_mysql
+          tools: composer:v2
+
+      # Set up Node.js for Vite
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      # Cache Composer dependencies
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      # Cache npm dependencies
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-
+
+      # Install PHP dependencies
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --optimize-autoloader
+        timeout-minutes: 10
+
+      # Install Node.js dependencies
+      - name: Install npm dependencies
+        run: npm install
+
+      # Build Vite assets
+      - name: Build Vite assets
+        run: npm run build
+
+      # Create .env for testing
+      - name: Create .env for testing
+        run: |
+          cp .env.example.local .env
+          sed -i "s|DB_DATABASE=.*|DB_DATABASE=${{ secrets.DB_DATABASE }}|" .env
+          sed -i "s|DB_USERNAME=.*|DB_USERNAME=${{ secrets.DB_USERNAME }}|" .env
+          sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=${{ secrets.DB_PASSWORD }}|" .env
+          sed -i "s|APP_ENV=.*|APP_ENV=testing|" .env
+          sed -i "s|APP_KEY=.*|APP_KEY=${{ secrets.APP_KEY }}|" .env
+          sed -i "s|APP_URL=.*|APP_URL=${{ secrets.APP_URL }}|" .env
+
+      # Run migrations for testing
+      - name: Run migrations
+        run: php artisan migrate --force
+        env:
+          DB_DATABASE: ${{ secrets.DB_DATABASE }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+      # Clean working directory after completion
+      - name: Clean working directory after job
+        if: always()
+        run: |
+          rm -rf $GITHUB_WORKSPACE/*
+          echo "Working directory cleaned after job: $GITHUB_WORKSPACE"
+
+  deploy:
+    runs-on: [self-hosted, Linux, X64, thcadmin3]
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    env:
+      DEPLOY_PATH: /var/www/THCWebsite3.0_AdminPanel
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: ${{ secrets.DB_DATABASE }}
+      DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      VITE_APP_NAME: TheHonestCo
+      APP_KEY: ${{ secrets.APP_KEY }}
+      APP_URL: ${{ secrets.APP_URL }}
+
+    steps:
+      # Clean working directory before starting
+      - name: Clean working directory
+        run: |
+          rm -rf $GITHUB_WORKSPACE/*
+          echo "Working directory cleaned: $GITHUB_WORKSPACE"
+
+      # Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up PHP
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, xml, ctype, iconv, mysql, pdo, pdo_mysql
+          tools: composer:v2
+
+      # Set up Node.js for Vite
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      # Cache Composer dependencies
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      # Cache npm dependencies
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-
+
+      # Install PHP dependencies
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --optimize-autoloader
+        timeout-minutes: 10
+
+      # Install Node.js dependencies
+      - name: Install npm dependencies
+        run: npm install
+
+      # Build Vite assets
+      - name: Build Vite assets
+        run: npm run build
+
+      # Create .env for production
+      - name: Create .env for production
+        run: |
+          cp .env.example.local .env
+          sed -i "s|DB_DATABASE=.*|DB_DATABASE=${{ secrets.DB_DATABASE }}|" .env
+          sed -i "s|DB_USERNAME=.*|DB_USERNAME=${{ secrets.DB_USERNAME }}|" .env
+          sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=${{ secrets.DB_PASSWORD }}|" .env
+          sed -i "s|APP_ENV=.*|APP_ENV=production|" .env
+          sed -i "s|APP_KEY=.*|APP_KEY=${{ secrets.APP_KEY }}|" .env
+          sed -i "s|APP_URL=.*|APP_URL=${{ secrets.APP_URL }}|" .env
+
+      # Clear caches
+      - name: Clear caches
+        run: |
+          php artisan cache:clear
+          php artisan config:clear
+          php artisan route:clear
+          php artisan view:clear
+
+      # Run migrations
+      - name: Run migrations
+        run: php artisan migrate --force
+        env:
+          DB_DATABASE: ${{ secrets.DB_DATABASE }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+      # Deploy to production directory
+      - name: Deploy to production
+        run: |
+          sudo rsync -av --delete --exclude='.env' ./ ${{ env.DEPLOY_PATH }}/
+          sudo cp .env ${{ env.DEPLOY_PATH }}/.env
+          sudo chown -R www-data:www-data ${{ env.DEPLOY_PATH }}
+          sudo chmod -R 755 ${{ env.DEPLOY_PATH }}/storage
+          sudo chmod -R 755 ${{ env.DEPLOY_PATH }}/bootstrap/cache
+
+      # Restart PHP-FPM and web server
+      - name: Restart services
+        run: |
+          sudo systemctl restart php8.2-fpm
+          sudo systemctl restart nginx
+
+      # Restart PHP-FPM and web server
+      - name: Check Apache2 and Php-fpm services status
+        run: |
+          sudo systemctl status php8.2-fpm
+          sudo systemctl status nginx
+
+      # Clean working directory after completion
+      - name: Clean working directory after job
+        if: always()
+        run: |
+          rm -rf $GITHUB_WORKSPACE/*
+          echo "Working directory cleaned after job: $GITHUB_WORKSPACE"
